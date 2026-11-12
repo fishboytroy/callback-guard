@@ -42,8 +42,21 @@ def main():
     window.minsize(720, 540)
     frame = ttk.Frame(window, padding=18)
     frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='Callback Guard', font=('Segoe UI', 22, 'bold')).pack(anchor='w')
-    ttk.Label(frame, text='Inspect a download or local file. APK mode is selected automatically.').pack(anchor='w', pady=(4, 14))
+    header = ttk.Frame(frame)
+    header.pack(fill='x', pady=(0, 14))
+    logo = ROOT / 'CallbackInspector.png'
+    if logo.is_file():
+        try:
+            logo_image = tk.PhotoImage(file=str(logo))
+            logo_label = ttk.Label(header, image=logo_image)
+            logo_label.image = logo_image  # Keep the Tk image alive while the UI is open.
+            logo_label.pack(side='left', padx=(0, 14))
+        except tk.TclError:
+            pass
+    header_text = ttk.Frame(header)
+    header_text.pack(side='left', fill='x', expand=True)
+    ttk.Label(header_text, text='Callback Guard', font=('Segoe UI', 22, 'bold')).pack(anchor='w')
+    ttk.Label(header_text, text='Inspect a download or local file. APK mode is selected automatically.').pack(anchor='w', pady=(4, 0))
     ttk.Label(frame, text='HTTPS download or repository URL').pack(anchor='w')
     url = ttk.Entry(frame)
     url.pack(fill='x', pady=(3, 8))
