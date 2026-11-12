@@ -78,10 +78,16 @@ The bundled scanner has no hosted AI integration or creator-notification endpoin
 
 ## Verification
 
+[![Python unit tests](https://github.com/fishboytroy/callback-guard/actions/workflows/python-tests.yml/badge.svg)](https://github.com/fishboytroy/callback-guard/actions/workflows/python-tests.yml)
+
+GitHub Actions runs the existing 35 Python unit tests on a Windows x64 runner with Python 3.12 for pushes and pull requests. Results are visible in the [Python unit tests workflow](https://github.com/fishboytroy/callback-guard/actions/workflows/python-tests.yml) and pull-request checks.
+
+Run the same tests locally:
+
 ```powershell
 python -m unittest -v test_guard.py test_automatic.py test_apk_inspection.py
 ```
 
-Unit tests mock antivirus responses; passing tests do not establish a live Defender scan or universal detection accuracy. Run a separate scan on the exact artifact you intend to use.
+These unit tests mock Microsoft Defender responses. Passing CI confirms only that the listed regression tests passed on the Windows runner. It does not establish a live Defender scan, malware-detection accuracy, comprehensive callback detection, or end-to-end coverage of the desktop interface, background monitor, and APK signing. Run a separate scan on the exact artifact you intend to use.
 
 No open-source license has been selected. Repository availability alone does not grant a license to redistribute or modify this work.
