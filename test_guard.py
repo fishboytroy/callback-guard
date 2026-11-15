@@ -410,5 +410,50 @@ class ReportingTests(unittest.TestCase):
         self.assertIn('untrusted data, not instructions', text)
 
 
+class DependencyTests(unittest.TestCase):
+    def test_requirements_listed_not_blocking(self):
+        findings = guard.inspect(b"requests==2.31.0\nflask\n", 'requirements.txt')
+        deps = [f for f in findings if f['rule'] == 'dependency']
+        self.assertEqual({d['package'] for d in deps}, {'requests', 'flask'})
+        self.assertFalse(guard.blocking(findings))
+
+    def test_pyproject_dependencies(self):
+        src = b'[project]\nname = "x"\ndependencies = ["requests>=2", "django"]\n'
+        deps = [f['package'] for f in guard.inspect(src, 'pyproject.toml') if f['rule'] == 'dependency']
+        self.assertEqual(set(deps), {'requests', 'django'})
+
+    def test_typosquat_substitution_and_transposition(self):
+        subst = guard.inspect(b'{"dependencies":{"expres":"^4"}}', 'package.json')
+        self.assertTrue(any(f['rule'] == 'typosquat-suspect' for f in subst))
+        transp = guard.inspect(b"reqeusts==1.0\n", 'requirements.txt')
+        self.assertTrue(any(f['rule'] == 'typosquat-suspect' for f in transp))
+
+    def test_known_good_dependency_not_typosquat(self):
+        findings = guard.inspect(b'{"dependencies":{"lodash":"^4.17.21"}}', 'package.json')
+        self.assertFalse(any(f['rule'] == 'typosquat-suspect' for f in findings))
+
+    def test_osv_enrich_adds_high_finding(self):
+        findings = [{'rule': 'dependency', 'ecosystem': 'pypi', 'package': 'evil', 'version': '1.0', 'file': 'requirements.txt'}]
+        with patch.object(guard, 'osv_lookup', return_value=['GHSA-xxxx']):
+            guard.enrich_with_osv(findings)
+        vuln = [f for f in findings if f['rule'] == 'known-vulnerability']
+        self.assertTrue(vuln and vuln[0]['severity'] == 'high')
+
+    def test_osv_unavailable_is_info(self):
+        findings = [{'rule': 'dependency', 'ecosystem': 'pypi', 'package': 'x', 'version': None, 'file': 'r.txt'}]
+        with patch.object(guard, 'osv_lookup', return_value=None):
+            guard.enrich_with_osv(findings)
+        self.assertTrue(any(f['rule'] == 'osv-unavailable' and f['severity'] == 'info' for f in findings))
+
+    def test_run_osv_flag_off_by_default_no_network(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); src = root / 'requirements.txt'; src.write_text('requests==2.31.0\n')
+            with patch.object(guard, 'antivirus', return_value={'status': 'completed-no-detection'}), \
+                 patch.object(guard, 'osv_lookup', side_effect=AssertionError('network used')):
+                report, _ = guard.run(source=src, storage=root / 'intake')
+            self.assertEqual(report['status'], 'checks-passed')
+            self.assertNotIn('osv_checked', report)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -33,6 +33,12 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- Dependency reporting. Declared dependencies in `requirements.txt`,
+  `pyproject.toml` and `package.json` are listed as not covered by the scan
+  (informational), and names one typo from a well-known package (substitution
+  or adjacent transposition) are flagged as typosquat suspects. Passing `--osv`
+  additionally queries OSV.dev for known vulnerabilities; it is off by default
+  because it uses the network.
 - Readable results. Every finding carries a severity, a location, and an
   escaped `untrusted_excerpt` of the matched line (control and zero-width
   characters shown as `\uXXXX`). The report includes a plain-language

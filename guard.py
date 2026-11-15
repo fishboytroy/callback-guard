@@ -2,6 +2,10 @@
 import argparse
 import ast
 import hashlib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    tomllib = None
 import io
 import json
 import os
@@ -417,6 +421,184 @@ def analyze_injection(text, name):
     return findings
 
 
+# ---- Dependency reporting (Phase 6) -----------------------------------------
+# Dependencies are listed, not resolved or fetched. Each is reported as not
+# covered by this scan. A tiny offline typosquat check runs by default; a
+# known-vulnerability lookup against OSV.dev is opt-in because it uses network.
+TOP_PACKAGES = {
+    'pypi': {'requests', 'urllib3', 'numpy', 'pandas', 'flask', 'django', 'boto3',
+             'setuptools', 'pip', 'wheel', 'pytest', 'pyyaml', 'click', 'jinja2',
+             'cryptography', 'certifi', 'idna', 'six', 'colorama', 'scipy'},
+    'npm': {'lodash', 'react', 'express', 'chalk', 'axios', 'debug', 'commander',
+            'request', 'async', 'moment', 'webpack', 'typescript', 'vue', 'jest',
+            'eslint', 'dotenv', 'uuid', 'glob', 'yargs', 'next'},
+}
+DEPENDENCY_MANIFESTS = {'requirements.txt', 'pyproject.toml', 'package.json'}
+
+
+def _edit_distance_one(a, b):
+    if a == b:
+        return False
+    if abs(len(a) - len(b)) > 1:
+        return False
+    # True when one substitution, one adjacent transposition, or one insertion
+    # or deletion apart (Damerau-style; transpositions are a common typosquat).
+    if len(a) == len(b):
+        diffs = [i for i, (x, y) in enumerate(zip(a, b)) if x != y]
+        if len(diffs) == 1:
+            return True
+        if len(diffs) == 2 and diffs[1] == diffs[0] + 1:
+            i, j = diffs
+            return a[i] == b[j] and a[j] == b[i]
+        return False
+    short, long = (a, b) if len(a) < len(b) else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(short) and j < len(long):
+        if short[i] != long[j]:
+            if skipped:
+                return False
+            skipped = True
+            j += 1
+        else:
+            i += 1
+            j += 1
+    return True
+
+
+def _typosquat(name, ecosystem):
+    name = name.lower()
+    top = TOP_PACKAGES.get(ecosystem, set())
+    if name in top:
+        return None
+    for known in top:
+        if _edit_distance_one(name, known):
+            return known
+    return None
+
+
+def _parse_requirements(text):
+    deps = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(('#', '-')):
+            continue
+        line = line.split(';')[0].split('#')[0].strip()
+        match = re.match(r'^([A-Za-z0-9][A-Za-z0-9._-]*)', line)
+        if match:
+            name = match.group(1)
+            version = line[len(name):].strip() or None
+            deps.append((name, version))
+    return deps
+
+
+def _parse_pyproject(text):
+    if tomllib is None:
+        return []
+    try:
+        data = tomllib.loads(text)
+    except (ValueError, TypeError):
+        return []
+    deps = []
+    project = data.get('project', {}) if isinstance(data, dict) else {}
+    for spec in project.get('dependencies', []) or []:
+        match = re.match(r'^([A-Za-z0-9][A-Za-z0-9._-]*)', str(spec))
+        if match:
+            deps.append((match.group(1), None))
+    for group in (project.get('optional-dependencies', {}) or {}).values():
+        for spec in group or []:
+            match = re.match(r'^([A-Za-z0-9][A-Za-z0-9._-]*)', str(spec))
+            if match:
+                deps.append((match.group(1), None))
+    poetry = data.get('tool', {}).get('poetry', {}) if isinstance(data, dict) else {}
+    for key in (poetry.get('dependencies', {}) or {}):
+        if key.lower() != 'python':
+            deps.append((key, None))
+    return deps
+
+
+def _parse_package_json_deps(text):
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    deps = []
+    for section in ('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'):
+        block = data.get(section)
+        if isinstance(block, dict):
+            for name, version in block.items():
+                deps.append((name, version if isinstance(version, str) else None))
+    return deps
+
+
+def analyze_dependencies(text, name):
+    """List declared dependencies (not resolved or fetched) and flag typosquats."""
+    base = Path(name).name.lower()
+    if base == 'requirements.txt':
+        ecosystem, deps = 'pypi', _parse_requirements(text)
+    elif base == 'pyproject.toml':
+        ecosystem, deps = 'pypi', _parse_pyproject(text)
+    elif base == 'package.json':
+        ecosystem, deps = 'npm', _parse_package_json_deps(text)
+    else:
+        return []
+    findings = []
+    for dep_name, version in deps:
+        findings.append({'rule': 'dependency', 'file': name, 'severity': 'info',
+                         'ecosystem': ecosystem, 'package': dep_name, 'version': version,
+                         'detail': 'declared dependency; not covered by this scan'})
+        near = _typosquat(dep_name, ecosystem)
+        if near:
+            findings.append({'rule': 'typosquat-suspect', 'file': name, 'severity': 'low',
+                             'ecosystem': ecosystem, 'package': dep_name,
+                             'detail': 'name is one edit from "%s"' % near})
+    return findings
+
+
+def osv_lookup(ecosystem, name, version):
+    """Query OSV.dev for known vulnerabilities. Network; caller opts in. Returns
+    a list of advisory ids, or None if the lookup could not be completed."""
+    osv_ecosystem = {'pypi': 'PyPI', 'npm': 'npm'}.get(ecosystem)
+    if not osv_ecosystem:
+        return None
+    query = {'package': {'name': name, 'ecosystem': osv_ecosystem}}
+    if version:
+        cleaned = re.sub(r'^[^0-9]*', '', version)
+        if cleaned:
+            query['version'] = cleaned
+    body = json.dumps(query).encode()
+    request = urllib.request.Request('https://api.osv.dev/v1/query', data=body,
+                                     headers={'Content-Type': 'application/json',
+                                              'User-Agent': 'Callback-Guard/1.1'})
+    try:
+        opener = urllib.request.build_opener(HTTPSOnly())
+        with opener.open(request, timeout=15) as response:
+            data = json.loads(response.read(1024 * 1024))
+        return [v.get('id') for v in data.get('vulns', []) if v.get('id')]
+    except Exception:
+        return None
+
+
+def enrich_with_osv(findings):
+    """Append known-vulnerability findings for each listed dependency. Mutates and
+    returns the findings list. Only called when the user passes --osv."""
+    extra = []
+    for finding in findings:
+        if finding.get('rule') != 'dependency':
+            continue
+        ids = osv_lookup(finding.get('ecosystem'), finding.get('package'), finding.get('version'))
+        if ids is None:
+            extra.append({'rule': 'osv-unavailable', 'file': finding.get('file'), 'severity': 'info',
+                          'package': finding.get('package'), 'detail': 'OSV lookup could not be completed'})
+        elif ids:
+            extra.append({'rule': 'known-vulnerability', 'file': finding.get('file'), 'severity': 'high',
+                          'package': finding.get('package'), 'detail': 'OSV: ' + ', '.join(ids[:5])})
+    findings.extend(extra)
+    return findings
+
+
 def analyze_structural(text, name, allowlist):
     """Dispatch structure-aware analysis by file type. Returns severity-tagged
     findings, with allowlisted rules downgraded."""
@@ -429,6 +611,8 @@ def analyze_structural(text, name, allowlist):
         findings = analyze_normalized(text, name, LANG_BY_SUFFIX[suffix])
     if base == 'package.json':
         findings += analyze_package_json(text, name)
+    if base in DEPENDENCY_MANIFESTS:
+        findings += analyze_dependencies(text, name)
     if suffix in INJECTION_SUFFIXES:
         findings += analyze_injection(text, name)
     return [apply_allowlist(f, None, allowlist) for f in findings]
@@ -609,7 +793,7 @@ class HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def run(source=None, url=None, name=None, storage=ROOT / 'intake'):
+def run(source=None, url=None, name=None, storage=ROOT / 'intake', osv=False):
     job = storage / uuid.uuid4().hex
     job.mkdir(parents=True, exist_ok=False)
     report = {'version': 1, 'created': time.time(), 'status': 'held', 'findings': [],
@@ -654,6 +838,10 @@ def run(source=None, url=None, name=None, storage=ROOT / 'intake'):
                 report['status'] = 'review-required'
         else:
             report['findings'] = inspect_payload(data, name)
+        if osv:
+            # Opt-in network lookup; may add known-vulnerability findings.
+            enrich_with_osv(report['findings'])
+            report['osv_checked'] = True
         report['blocking'] = blocking(report['findings'])
         report['max_severity'] = max((f.get('severity', 'info') for f in report['findings']),
                                      key=lambda s: SEVERITY_ORDER.get(s, 0), default=None)
@@ -695,11 +883,13 @@ if __name__ == '__main__':
     group.add_argument('--url')
     parser.add_argument('--name')
     parser.add_argument('--gui', action='store_true')
+    parser.add_argument('--osv', action='store_true',
+                        help='Look up declared dependencies against OSV.dev (uses network).')
     args = parser.parse_args()
     if args.gui:
         gui()
     elif args.source or args.url:
-        result, report_file = run(source=args.source, url=args.url, name=args.name)
+        result, report_file = run(source=args.source, url=args.url, name=args.name, osv=args.osv)
         print(json.dumps({'status': result['status'], 'report': str(report_file),
                           'checked_file': result.get('checked_file')}))
         sys.exit(0 if result['status'] == 'checks-passed' else 2)
