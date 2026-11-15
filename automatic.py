@@ -249,6 +249,7 @@ def scan_repository(root):
                     raise ValueError('Incomplete scan: finding limit exceeded')
         report['antivirus'] = guard.antivirus(root)
         report['blocking'] = guard.blocking(report['findings'])
+        report['risk_summary'] = guard.summarize_risk(report['findings'])
         if not report['blocking'] and report['antivirus']['status'] == 'completed-no-detection':
             # Detect content changes while Defender was running.
             for item in report['files']:

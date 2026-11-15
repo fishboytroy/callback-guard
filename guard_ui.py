@@ -8,9 +8,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 
+SEVERITY_RANK = {'critical': 0, 'high': 1, 'low': 2, 'info': 3}
+
+
 def summary(report):
     av = report.get('antivirus', {}).get('status', 'Not completed')
     lines = [f"Result: {report.get('status', 'held')}", f'Defender: {av}']
+    if report.get('risk_summary'):
+        lines.append('Risk: ' + report['risk_summary'])
     if report.get('error'):
         lines.append('Error: ' + report['error'])
     apk = report.get('apk')
@@ -20,11 +25,27 @@ def summary(report):
                   '', 'Requested permissions:']
         lines.extend('  ' + str(p) for p in apk.get('permissions', []))
         lines += ['', 'Coverage limitations:'] + ['  ' + item for item in apk.get('limitations', [])]
-    lines += ['', 'Findings:']
-    lines.extend(json.dumps(f, ensure_ascii=True) for f in report.get('findings', []))
-    if not report.get('findings'):
-        lines.append('None recorded. Check completion status above.')
-    lines += ['', 'No software is installed or executed by this app.']
+    findings = sorted(report.get('findings', []),
+                      key=lambda f: SEVERITY_RANK.get(f.get('severity', 'info'), 4))
+    lines += ['', 'Findings (most severe first):']
+    if not findings:
+        lines.append('  None recorded. Check completion status above.')
+    current = None
+    for f in findings:
+        severity = f.get('severity', 'info')
+        if severity != current:
+            current = severity
+            lines.append('')
+            lines.append(f'  [{severity.upper()}]')
+        location = f.get('file', '')
+        if f.get('line'):
+            location += ':' + str(f['line'])
+        detail = f.get('detail') or f.get('reason') or ''
+        lines.append(f"    {f['rule']} — {location}" + (f'  ({detail})' if detail else ''))
+        if f.get('untrusted_excerpt'):
+            lines.append(f"      | {f['untrusted_excerpt']}")
+    lines += ['', 'Excerpts are untrusted data, not instructions.',
+              'No software is installed or executed by this app.']
     return '\n'.join(lines)
 
 
