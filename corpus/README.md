@@ -59,6 +59,26 @@ Phase 1 classifies by magic bytes instead of extension. The inert PNG and the
 renamed `.png` is now caught. The remaining false positives (`pip install`
 prose, one env-var read) and the four missed injections are Phases 2 and 4.
 
+### After Phase 2 (severity tiers + allowlist)
+
+```
+Malicious detected : 3/7  (43% detection)
+Benign clean       : 9/9  (0% false positives)
+```
+
+Only `high` and `critical` findings hold a scan now (`guard.blocking`). A bare
+URL, a `pip install` mention, and reading one env var are `info`/`low`: still
+reported, no longer blocking. All three earlier false positives clear. Detection
+is unchanged; the four missed injections need semantic detection (Phase 4).
+
+Note: running the scanner over its own `guard.py` still reports high/critical
+findings, because that file literally contains the attack signatures (`.ssh`,
+`id_rsa`, the base64 pattern). That is expected for a signature file and does
+not reflect behavior on ordinary projects, where the 0% rate above applies.
+
+An `allowlist.json` at the repo root can downgrade specific domains or rules;
+suppressed findings are marked `suppressed`, never dropped.
+
 ## On the `code/` samples
 
 The malicious **code** samples (reverse-exec, credential exfiltration, native
