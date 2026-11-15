@@ -25,7 +25,10 @@ Copy-Item -Path (Join-Path $stock '*') -Destination $template -Recurse -Force
 $pythonSh = $python.Replace('\', '/')
 $automaticSh = (Join-Path $guardRoot 'automatic.py').Replace('\', '/')
 if ($pythonSh.Contains("'") -or $automaticSh.Contains("'")) { throw 'Single quote in installation path unsupported.' }
-$hook = "#!/bin/sh`n# Callback Guard: after-checkout scan; does not quarantine or undo checkout.`nexec '$pythonSh' -E -s '$automaticSh' --repo .`n"
+# Report-only hook: scan after checkout, but always exit 0 so a finding never
+# makes `git clone`/`git checkout` look like it failed. Reports and the
+# notification carry the result.
+$hook = "#!/bin/sh`n# Callback Guard: after-checkout scan; reports only, never fails the checkout.`n'$pythonSh' -E -s '$automaticSh' --repo . || true`nexit 0`n"
 [System.IO.File]::WriteAllText((Join-Path $template 'hooks/post-checkout'), $hook, (New-Object System.Text.UTF8Encoding($false)))
 & git config --global init.templateDir $template
 if ($LASTEXITCODE -ne 0) { throw 'Could not configure Git template.' }

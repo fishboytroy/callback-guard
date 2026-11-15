@@ -100,15 +100,17 @@ Automatic monitoring is off until you explicitly run:
 
 This adds a Windows login shortcut and a user Git template post-checkout hook, then starts a background monitor. It refuses to replace an existing conflicting Git hooks/template configuration. Run `uninstall-automatic.ps1` to remove login startup and restore the previous template when still owned by this tool. Hook copies in repositories already created remain; the uninstaller reports that limitation.
 
-The monitor polls watched Downloads folders every three seconds and completed-download metadata in Chrome, Edge, and Brave every 30 seconds to cover Save As paths. It queries local browser databases for completed-download paths only and may create temporary database snapshots. It scans files after they appear stable in two polls. Existing files at first setup are baselined, not scanned. The latest 200 download records per browser profile and a 20,000-file inventory limit mean coverage is not exhaustive. Other browsers are covered only through watched folders.
+The monitor polls watched Downloads folders every three seconds. It scans files after they appear stable in two polls. Existing files at first setup are baselined, not scanned. A 20,000-file inventory limit means coverage is not exhaustive.
 
-The Git hook scans after checkout. Files already exist at that point; the hook does not undo checkout. Bare or no-checkout clones, alternate hooks/templates, disabled hooks, existing repositories without this hook, and clients ignoring Git configuration can bypass coverage. These features do not block execution or replace the manual pre-install gate.
+Reading browser download metadata is **off by default**. Set `"browser_metadata": true` in `automatic-state/config.json` to also poll completed-download paths in Chrome, Edge, and Brave every 30 seconds (covering Save As paths outside Downloads). That path queries local browser databases for completed-download paths only and may create temporary snapshots; because this resembles the behavior of information-stealing software, endpoint-protection tools may flag it, so it is opt-in. With it off, only watched folders are covered.
 
-Use `Open Automatic Reports.cmd` for reports and `Stop Automatic Monitor.cmd` to request a stop. Runtime files live under `automatic-state/`. Add custom watched directories in `automatic-state/config.json` under `extra_download_folders`.
+The Git hook scans after checkout. Files already exist at that point; the hook does not undo checkout, and it always exits 0 so a finding never makes `git clone` or `git checkout` look like it failed — the saved report and the notification carry the result. Bare or no-checkout clones, alternate hooks/templates, disabled hooks, existing repositories without this hook, and clients ignoring Git configuration can bypass coverage. These features do not block execution or replace the manual pre-install gate.
+
+Use `Open Automatic Reports.cmd` for reports and `Stop Automatic Monitor.cmd` to request a stop. Runtime files live under `automatic-state/`. Add custom watched directories in `automatic-state/config.json` under `extra_download_folders`, and enable browser metadata there with `browser_metadata`.
 
 ## Privacy
 
-The bundled scanner has no hosted AI integration or creator-notification endpoint. Network access is used for a URL you ask it to download. Microsoft Defender may contact Microsoft according to your existing configuration. Optional monitoring reads local download metadata. Reports may contain private local paths, antivirus output, and untrusted APK strings; keep them private. Scan state, payloads, and logs are excluded from version control by `.gitignore`.
+The bundled scanner has no hosted AI integration or creator-notification endpoint. Network access is used for a URL you ask it to download. Microsoft Defender may contact Microsoft according to your existing configuration. Optional monitoring watches download folders; reading browser download metadata is off unless you enable `browser_metadata`. The `--osv` flag, when passed, sends dependency names (not file contents) to OSV.dev. Reports may contain private local paths, antivirus output, and untrusted APK strings; keep them private. Scan state, payloads, and logs are excluded from version control by `.gitignore`.
 
 ## Verification
 
