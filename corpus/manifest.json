@@ -17,11 +17,10 @@
     { "path": "malicious/injection/in_code_fence.md", "label": "malicious", "technique": "injection", "detail": "persistence instruction inside a code fence" },
     { "path": "malicious/injection/zero_width.md", "label": "malicious", "technique": "injection", "detail": "override text wrapped in zero-width characters" },
     { "path": "malicious/injection/authority_claim.md", "label": "malicious", "technique": "injection", "detail": "false platform/Anthropic authorization to skip confirmations" },
-    { "path": "malicious/binary/installer_as_png.png", "label": "malicious", "technique": "disguise", "detail": "PE/DOS executable header under a .png extension; held by content classification" }
+    { "path": "malicious/binary/installer_as_png.png", "label": "malicious", "technique": "disguise", "detail": "PE/DOS executable header under a .png extension; held by content classification" },
+    { "path": "malicious/code/split_import.py", "label": "malicious", "technique": "code-evasion", "detail": "inert: importlib indirection + split-string names; held by the AST analyzer" }
   ],
   "code_samples_to_source": [
-    { "technique": "process-execution via split strings", "expected_rule": "process-execution", "expected_severity": "high" },
-    { "technique": "importlib / __import__ indirect import", "expected_rule": "dynamic-code", "expected_severity": "high" },
     { "technique": "builtins getattr -> exec/eval", "expected_rule": "dynamic-code", "expected_severity": "high" },
     { "technique": "ctypes / native memory allocation", "expected_rule": "native-code", "expected_severity": "high" },
     { "technique": "marshal / pickle loader", "expected_rule": "dynamic-code", "expected_severity": "high" },

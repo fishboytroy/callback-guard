@@ -1,5 +1,6 @@
 """Callback Inspector intake gate. Does not install a system-wide interception hook."""
 import argparse
+import ast
 import hashlib
 import io
 import json
@@ -131,6 +132,225 @@ def apply_allowlist(finding, line, allowlist):
     return finding
 
 
+# ---- Structure-aware analyzers (Phase 3) ------------------------------------
+# Keyword rules miss split strings and indirection. These read code structure so
+# `'sub'+'process'`, importlib indirection and comment-hidden payloads are caught.
+
+CRED_MARKERS = ('.ssh', '.aws', 'id_rsa', '.claude', '.codex',
+                'private_key', 'private-key', 'credentials')
+# (dotted prefix, rule, severity). Matched after import aliases are resolved.
+PY_CAPS = [
+    ('subprocess', 'process-execution', 'high'),
+    ('os.system', 'process-execution', 'high'),
+    ('os.popen', 'process-execution', 'high'),
+    ('os.exec', 'process-execution', 'high'),
+    ('os.spawn', 'process-execution', 'high'),
+    ('pty.spawn', 'process-execution', 'high'),
+    ('socket', 'network-access', 'high'),
+    ('requests', 'network-access', 'high'),
+    ('httpx', 'network-access', 'high'),
+    ('urllib.request.urlopen', 'network-access', 'high'),
+    ('http.client', 'network-access', 'high'),
+    ('ftplib', 'network-access', 'high'),
+    ('smtplib', 'network-access', 'high'),
+    ('eval', 'dynamic-code', 'high'),
+    ('exec', 'dynamic-code', 'high'),
+    ('compile', 'dynamic-code', 'high'),
+    ('pickle.loads', 'dynamic-code', 'high'),
+    ('marshal.loads', 'dynamic-code', 'high'),
+    ('__import__', 'dynamic-code', 'high'),
+    ('importlib.import_module', 'dynamic-code', 'high'),
+    ('ctypes', 'native-code', 'high'),
+    ('cffi', 'native-code', 'high'),
+]
+PROCESS_NET = {'process-execution', 'network-access'}
+
+
+def _py_fold(node):
+    """Evaluate a constant string built from literal +, * and ''.join([...]), so
+    a split or assembled name resolves. Returns the value or None."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _py_fold(node.left), _py_fold(node.right)
+        if isinstance(left, str) and isinstance(right, str):
+            return left + right
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mult):
+        left, right = _py_fold(node.left), _py_fold(node.right)
+        if isinstance(left, str) and isinstance(right, int):
+            return left * right
+        if isinstance(left, int) and isinstance(right, str):
+            return left * right
+    if isinstance(node, ast.Call):
+        func = node.func
+        if (isinstance(func, ast.Attribute) and func.attr == 'join'
+                and isinstance(func.value, ast.Constant) and isinstance(func.value.value, str)
+                and len(node.args) == 1 and isinstance(node.args[0], (ast.List, ast.Tuple))):
+            items = [_py_fold(e) for e in node.args[0].elts]
+            if all(isinstance(i, str) for i in items):
+                return func.value.value.join(items)
+    return None
+
+
+def _py_dotted(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return '.'.join(reversed(parts))
+    return None
+
+
+def _py_imports(tree):
+    """Map each bound name to the module/attribute it refers to."""
+    imports = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                if a.asname:
+                    imports[a.asname] = a.name
+                else:
+                    top = a.name.split('.')[0]
+                    imports[top] = top
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ''
+            for a in node.names:
+                imports[a.asname or a.name] = (module + '.' + a.name) if module else a.name
+    return imports
+
+
+def _py_canonical(name, imports):
+    root, _, rest = name.partition('.')
+    base = imports.get(root, root)
+    return base + ('.' + rest if rest else '')
+
+
+def _py_capability(cname):
+    for prefix, rule, severity in PY_CAPS:
+        if cname == prefix or cname.startswith(prefix + '.'):
+            return rule, severity
+    return None
+
+
+def analyze_python(text, name):
+    """AST analysis: resolve imports and folded strings, flag dangerous calls,
+    and escalate a credential read combined with process/network to critical."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return [{'rule': 'python-unparseable', 'file': name, 'severity': 'low',
+                 'reason': 'Could not parse; keyword rules still applied'}]
+    imports = _py_imports(tree)
+    findings, caps, cred_line = [], set(), None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            low = node.value.lower()
+            if any(marker in low for marker in CRED_MARKERS):
+                line = getattr(node, 'lineno', 0)
+                cred_line = cred_line or line
+                findings.append({'rule': 'credential-access', 'file': name, 'line': line,
+                                 'severity': 'critical', 'detail': 'credential path in string'})
+        if isinstance(node, ast.Call):
+            dotted = _py_dotted(node.func)
+            if dotted and (dotted == 'getattr' or dotted.endswith('.getattr')):
+                if len(node.args) >= 2 and not isinstance(node.args[1], ast.Constant):
+                    findings.append({'rule': 'dynamic-code', 'file': name, 'line': node.lineno,
+                                     'severity': 'high', 'detail': 'getattr with computed attribute name'})
+                    caps.add('dynamic-code')
+            if dotted:
+                cname = _py_canonical(dotted, imports)
+                cap = _py_capability(cname)
+                if cap:
+                    rule, severity = cap
+                    findings.append({'rule': rule, 'file': name, 'line': node.lineno,
+                                     'severity': severity, 'detail': cname})
+                    caps.add(rule)
+                if cname in ('importlib.import_module', '__import__') and node.args:
+                    module = _py_fold(node.args[0])
+                    if isinstance(module, str):
+                        nested = _py_capability(module)
+                        if nested:
+                            rule, severity = nested
+                            findings.append({'rule': rule, 'file': name, 'line': node.lineno,
+                                             'severity': severity, 'detail': 'dynamic import of ' + module})
+                            caps.add(rule)
+    if cred_line is not None and (caps & PROCESS_NET):
+        findings.append({'rule': 'exfiltration', 'file': name, 'line': cred_line, 'severity': 'critical',
+                         'detail': 'credential read combined with process/network capability'})
+    return findings
+
+
+def _normalize_line(line):
+    # Merge adjacent string literals split to dodge matching: 'a'+'b' -> 'ab'.
+    return re.sub(r'''(['"])\s*\+\s*(['"])''', '', line)
+
+
+NORMALIZED_CAPS = {
+    'powershell': [
+        ('dynamic-code', r'scriptblock\]::create|invoke-expression|\biex\b|frombase64string|-encodedcommand\b', 'high'),
+        ('remote-execution', r'net\.webclient|downloadstring|downloadfile|invoke-webrequest|invoke-restmethod', 'high'),
+        ('persistence', r'register-scheduledtask|schtasks|add-mppreference|set-mppreference', 'high'),
+    ],
+    'javascript': [
+        ('process-execution', r'child_process|execsync|spawnsync|execfilesync', 'high'),
+        ('dynamic-code', r'\beval\s*\(|new\s+function\s*\(', 'high'),
+        ('dynamic-require', r'require\s*\(\s*[^\'")\s]', 'high'),
+    ],
+    'shell': [
+        ('remote-execution', r'(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)|/dev/tcp/|\bnc\s+-e|bash\s+-c', 'high'),
+    ],
+}
+LANG_BY_SUFFIX = {
+    '.ps1': 'powershell', '.psm1': 'powershell', '.psd1': 'powershell',
+    '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript',
+    '.ts': 'javascript', '.jsx': 'javascript', '.tsx': 'javascript',
+    '.sh': 'shell', '.bash': 'shell',
+}
+
+
+def analyze_normalized(text, name, lang):
+    findings = []
+    for line_no, line in enumerate(text.splitlines(), 1):
+        normalized = _normalize_line(line)
+        for rule, pattern, severity in NORMALIZED_CAPS[lang]:
+            if re.search(pattern, normalized, re.I):
+                findings.append({'rule': rule, 'file': name, 'line': line_no, 'severity': severity})
+    return findings
+
+
+def analyze_package_json(text, name):
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    scripts = data.get('scripts', {}) if isinstance(data, dict) else {}
+    if not isinstance(scripts, dict):
+        return []
+    findings = []
+    for hook in ('preinstall', 'install', 'postinstall', 'prepare', 'preuninstall', 'postuninstall'):
+        if hook in scripts:
+            findings.append({'rule': 'persistence', 'file': name, 'severity': 'high',
+                             'detail': 'npm ' + hook + ' lifecycle script'})
+    return findings
+
+
+def analyze_structural(text, name, allowlist):
+    """Dispatch structure-aware analysis by file type. Returns severity-tagged
+    findings, with allowlisted rules downgraded."""
+    suffix = Path(name).suffix.lower()
+    base = Path(name).name.lower()
+    findings = []
+    if suffix == '.py':
+        findings = analyze_python(text, name)
+    elif suffix in LANG_BY_SUFFIX:
+        findings = analyze_normalized(text, name, LANG_BY_SUFFIX[suffix])
+    if base == 'package.json':
+        findings += analyze_package_json(text, name)
+    return [apply_allowlist(f, None, allowlist) for f in findings]
+
+
 def inspect(data, name):
     """Strict heuristic policy: every finding requires review, never auto-override.
 
@@ -169,6 +389,7 @@ def inspect(data, name):
         if len(findings) >= 1000:
             findings.append({'rule': 'incomplete', 'file': name, 'severity': 'high', 'reason': 'Finding limit reached'})
             break
+    findings.extend(analyze_structural(text, name, allowlist))
     return findings
 
 
