@@ -99,6 +99,26 @@ semantic detection in Phase 4. More executable-malware techniques (PowerShell
 cradle, exfil, loaders) are covered by unit tests; only one inert Python fixture
 is shipped in `malicious/code/`.
 
+### After Phase 4 (prompt-injection detection)
+
+```
+Malicious detected : 12/12  (100% detection)
+Benign clean       : 10/10  (0% false positives)
+```
+
+Injection is scored over a sliding multi-line window across five signal
+categories (address to the assistant, concealment, sensitive target,
+exfiltration, authority/override); dangerous combinations are flagged, and
+concealment plus a sensitive target or exfiltration is `critical`. Zero-width
+characters are stripped first, so split text still matches. All ten injection
+wordings are held, including the four that relied on plain phrasing, while a
+real skill that addresses the assistant (`legit_skill.md`) and ordinary READMEs
+stay clean.
+
+When injection is flagged, the report includes an `injection_review` packet of
+the suspicious passages. An agent may classify them and add findings, but per
+`SKILL.md` it can never clear a held result.
+
 ## On the `code/` samples
 
 The malicious **code** samples (reverse-exec, credential exfiltration, native
