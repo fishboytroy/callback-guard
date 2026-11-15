@@ -33,6 +33,11 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- Readable results. Every finding carries a severity, a location, and an
+  escaped `untrusted_excerpt` of the matched line (control and zero-width
+  characters shown as `\uXXXX`). The report includes a plain-language
+  `risk_summary`, and the desktop Summary groups findings by severity, most
+  severe first.
 - Prompt-injection detection. Instruction text aimed at the assistant is scored
   over a multi-line window across five signal categories (address to the model,
   concealment, sensitive target, exfiltration, authority/override), so reworded

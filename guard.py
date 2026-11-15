@@ -102,6 +102,41 @@ def blocking(findings):
     return any(f.get('severity') in BLOCKING for f in findings)
 
 
+def escape_excerpt(line, limit=200):
+    """A single line rendered safe to display: control and format (zero-width)
+    characters become visible \\uXXXX escapes, trimmed to `limit` characters.
+    The result is untrusted data, never instructions."""
+    out = []
+    for ch in line.strip():
+        if unicodedata.category(ch) == 'Cf' or (ord(ch) < 32 and ch != '\t'):
+            out.append('\\u%04x' % ord(ch))
+        else:
+            out.append(ch)
+    text = ''.join(out)
+    return text[:limit] + '…' if len(text) > limit else text
+
+
+def summarize_risk(findings):
+    """One plain-language line: counts by severity, then the top blocking items."""
+    if not findings:
+        return 'No findings.'
+    counts = {}
+    for f in findings:
+        counts[f.get('severity', 'info')] = counts.get(f.get('severity', 'info'), 0) + 1
+    order = ['critical', 'high', 'low', 'info']
+    tally = ', '.join('%d %s' % (counts[s], s) for s in order if counts.get(s))
+    top = [f for s in ('critical', 'high') for f in findings if f.get('severity') == s][:3]
+
+    def where(f):
+        loc = f.get('file', '')
+        if f.get('line'):
+            loc += ':' + str(f['line'])
+        return f['rule'] + ((' (' + loc + ')') if loc else '')
+
+    detail = '; '.join(where(f) for f in top)
+    return tally + (('. ' + detail) if detail else '') + ('.' if detail and not detail.endswith('.') else '')
+
+
 def load_allowlist(root=ROOT):
     """Optional user allowlist. Suppressions downgrade a finding to info and mark
     it `suppressed`; findings are never silently dropped.
@@ -438,6 +473,11 @@ def inspect(data, name):
             findings.append({'rule': 'incomplete', 'file': name, 'severity': 'high', 'reason': 'Finding limit reached'})
             break
     findings.extend(analyze_structural(text, name, allowlist))
+    source_lines = text.splitlines()
+    for finding in findings:
+        line_no = finding.get('line')
+        if line_no and 1 <= line_no <= len(source_lines) and 'untrusted_excerpt' not in finding:
+            finding['untrusted_excerpt'] = escape_excerpt(source_lines[line_no - 1])
     return findings
 
 
@@ -617,6 +657,7 @@ def run(source=None, url=None, name=None, storage=ROOT / 'intake'):
         report['blocking'] = blocking(report['findings'])
         report['max_severity'] = max((f.get('severity', 'info') for f in report['findings']),
                                      key=lambda s: SEVERITY_ORDER.get(s, 0), default=None)
+        report['risk_summary'] = summarize_risk(report['findings'])
         injection = [f for f in report['findings'] if f.get('rule') == 'prompt-injection']
         if injection:
             # Packet for an optional agent review. A review may ADD findings; it
