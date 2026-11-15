@@ -336,6 +336,52 @@ def analyze_package_json(text, name):
     return findings
 
 
+# ---- Prompt-injection detection (Phase 4) -----------------------------------
+# Instructions aimed at the assistant are rarely a single matchable phrase. They
+# combine an address to the model, a concealment ask, a sensitive target and an
+# exfiltration or override action, often spread across lines. Score categories
+# over a sliding multi-line window and flag dangerous combinations, so a single
+# benign signal (an ordinary skill saying "you are a ...") does not fire.
+INJECTION_SIGNALS = [
+    ('imperative', r'\byou are\b|\byou must\b|\byou should\b|when you (?:call|use|respond|answer|finish|have finished)|before you (?:respond|answer|reply)|when the user (?:asks|says|sends|next)|for the assistant|assistant[:,]|from now on,? you|do the following|your (?:reply|response|answer|output|summary|real instructions)'),
+    ('conceal', r"do not (?:mention|tell|inform|disclose|surface)|don't (?:mention|tell)|no need to (?:mention|tell|say)|without (?:telling|informing|the user)|keep (?:this|it)(?: process)? (?:to yourself|between us|secret|private)|\bquietly\b|\bsecretly\b|\bsilently\b|stays clean|report only that"),
+    ('sensitive', r'\bcredential|\bpassword|api[ -]?key|\bsecret|\.ssh\b|id_rsa|config(?:uration)? file|settings? file|settings\.json|environment variable|conversation history|chat history|shell (?:startup|profile)|startup file|~/\.|\.env\b'),
+    ('exfil', r'paste the contents|include (?:its|the|your)[^.\n]{0,30}contents|include (?:it|them) in your (?:reply|response|answer|summary)|attach what you find|append[^.\n]{0,30}to[^.\n]{0,30}(?:request|reply|summary)|send[^.\n]{0,40}(?:to |https?://)|exfiltrate|post[^.\n]{0,30}https?://|next outbound'),
+    ('authority', r'platform security|security team|pre-?approved|\bauthorized\b|authorization|comes from anthropic|system owner|this is required|overrides? your'),
+    ('override', r'skip[^.\n]{0,20}confirmation|without confirmation|proceed directly|do not pause|do not ask|\boverride\b|ignore your[^.\n]{0,20}(?:rules|guidance|caution|instructions)|no restrictions|\bbypass\b|disregard[^.\n]{0,25}(?:system|previous|earlier|instruction|message|guidance|safety)|take priority'),
+]
+INJECTION_SUFFIXES = {'.md', '.markdown', '.txt', '.rst'}
+
+
+def analyze_injection(text, name):
+    """Flag prompt injection by scoring category combinations over a sliding
+    multi-line window. Zero-width characters are stripped first so split text
+    still matches."""
+    stripped = ''.join(ch for ch in text if unicodedata.category(ch) != 'Cf')
+    lines = stripped.splitlines()
+    findings, i, window = [], 0, 6
+    while i < len(lines):
+        norm = unicodedata.normalize('NFKC', ' '.join(lines[i:i + window]))
+        cats = {cat for cat, pattern in INJECTION_SIGNALS if re.search(pattern, norm, re.I)}
+        severity = None
+        if 'conceal' in cats and ('sensitive' in cats or 'exfil' in cats):
+            severity = 'critical'
+        elif (('imperative' in cats and ('sensitive' in cats or 'exfil' in cats))
+              or ('exfil' in cats and 'sensitive' in cats)
+              or (('authority' in cats or 'imperative' in cats) and 'override' in cats)
+              or ('conceal' in cats and 'imperative' in cats)):
+            severity = 'high'
+        if severity:
+            findings.append({'rule': 'prompt-injection', 'file': name, 'line': i + 1,
+                             'severity': severity, 'detail': 'signals: ' + ','.join(sorted(cats))})
+            i += window  # step past this window to avoid duplicate overlapping hits
+        else:
+            i += 1
+        if len(findings) >= 20:
+            break
+    return findings
+
+
 def analyze_structural(text, name, allowlist):
     """Dispatch structure-aware analysis by file type. Returns severity-tagged
     findings, with allowlisted rules downgraded."""
@@ -348,6 +394,8 @@ def analyze_structural(text, name, allowlist):
         findings = analyze_normalized(text, name, LANG_BY_SUFFIX[suffix])
     if base == 'package.json':
         findings += analyze_package_json(text, name)
+    if suffix in INJECTION_SUFFIXES:
+        findings += analyze_injection(text, name)
     return [apply_allowlist(f, None, allowlist) for f in findings]
 
 
@@ -569,6 +617,15 @@ def run(source=None, url=None, name=None, storage=ROOT / 'intake'):
         report['blocking'] = blocking(report['findings'])
         report['max_severity'] = max((f.get('severity', 'info') for f in report['findings']),
                                      key=lambda s: SEVERITY_ORDER.get(s, 0), default=None)
+        injection = [f for f in report['findings'] if f.get('rule') == 'prompt-injection']
+        if injection:
+            # Packet for an optional agent review. A review may ADD findings; it
+            # must never clear a held result (see SKILL.md).
+            report['injection_review'] = {
+                'status': 'not-run',
+                'note': 'Heuristic flags only. An agent may classify these passages and add findings; it must never override a held result.',
+                'passages': [{'file': f.get('file'), 'line': f.get('line'),
+                              'severity': f['severity'], 'signals': f.get('detail')} for f in injection]}
         if (report['antivirus']['status'] == 'completed-no-detection'
                 and not report['blocking'] and report['status'] != 'review-required'):
             if not staged.exists() or hashlib.sha256(staged.read_bytes()).hexdigest() != report['sha256']:
