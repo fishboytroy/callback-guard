@@ -47,6 +47,18 @@ This is the number the engine rewrite (Phases 1-4) must beat. Target: >=90%
 detection and <=10% false positives, plus the executable-malware `code/`
 samples once sourced.
 
+### After Phase 1 (content classification)
+
+```
+Malicious detected : 3/7  (43% detection)
+Benign clean       : 6/9  (33% false positives)
+```
+
+Phase 1 classifies by magic bytes instead of extension. The inert PNG and the
+`.go` source now scan clean (both were held before), and a PE executable
+renamed `.png` is now caught. The remaining false positives (`pip install`
+prose, one env-var read) and the four missed injections are Phases 2 and 4.
+
 ## On the `code/` samples
 
 The malicious **code** samples (reverse-exec, credential exfiltration, native
