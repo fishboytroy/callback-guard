@@ -69,18 +69,66 @@ def classify(data):
     return 'text', text
 
 
+# Severity decides what blocks. Only `high` and `critical` hold a scan; `info`
+# and `low` are reported but allow `checks-passed`. Ordinary projects contain
+# URLs and `pip install` lines, so those are informational, not blocking.
+SEVERITY_ORDER = {'info': 0, 'low': 1, 'high': 2, 'critical': 3}
+BLOCKING = {'high', 'critical'}
+
+# (rule, pattern, severity). Rules were split so a benign signal (a bare URL, a
+# `pip install` mention, reading one env var) no longer carries the same weight
+# as an override instruction or a credential read.
 RULES = [
-    ('instruction-override', r'ignore\s+(?:all\s+)?(?:previous|prior|system)\s+instructions|bypass.{0,40}(?:approval|permission|consent)'),
-    ('concealment', r'secretly|silently|do not (?:tell|inform|disclose)|without (?:the )?user'),
-    ('dynamic-code', r'\beval\s*\(|\bexec\s*\(|Invoke-Expression|\biex\b|EncodedCommand|b64decode|\batob\s*\('),
-    ('remote-execution', r'(?:curl|wget|Invoke-WebRequest).{0,200}(?:\||exec|bash|powershell)|\bnpx\b'),
-    ('installation-or-persistence', r'\b(?:preinstall|postinstall|pip install|npm install|schtasks|crontab)\b'),
-    ('sensitive-access', r'os\.environ|process\.env|\.ssh\b|\.aws\b|\.env\b|clipboard|chat history'),
-    ('outbound-or-callback', r'https?://|wss?://|webhook|sendBeacon|\bfetch\s*\(|requests\.(?:get|post)|\btelemetry\b|phone.home'),
-    ('hidden-html', r'<!--|display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0'),
-    ('encoded-content', r'(?:[A-Za-z0-9+/]{100,}={0,2})|(?:\\x[0-9a-f]{2}){4,}'),
-    ('external-git-content', r'version https://git-lfs.github.com/spec/v1|\[submodule\s'),
+    ('instruction-override', r'ignore\s+(?:all\s+)?(?:previous|prior|system)\s+instructions|bypass.{0,40}(?:approval|permission|consent)', 'high'),
+    ('concealment', r'secretly|silently|do not (?:tell|inform|disclose)|without (?:the )?user', 'high'),
+    ('dynamic-code', r'\beval\s*\(|\bexec\s*\(|Invoke-Expression|\biex\b|EncodedCommand|b64decode|\batob\s*\(', 'high'),
+    ('remote-execution', r'(?:curl|wget|Invoke-WebRequest).{0,200}(?:\||exec|bash|powershell)|\bnpx\b', 'high'),
+    ('persistence', r'\b(?:preinstall|postinstall|schtasks|crontab)\b', 'high'),
+    ('credential-access', r'\.ssh\b|\.aws\b|id_rsa|\bsecrets?\b.{0,20}(?:token|key|password)|private[_-]?key', 'critical'),
+    ('network-call', r'webhook|sendBeacon|\bfetch\s*\(|requests\.(?:get|post)|\btelemetry\b|phone.home', 'low'),
+    ('hidden-html', r'<!--|display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0', 'high'),
+    ('encoded-content', r'(?:[A-Za-z0-9+/]{100,}={0,2})|(?:\\x[0-9a-f]{2}){4,}', 'high'),
+    ('external-git-content', r'version https://git-lfs.github.com/spec/v1|\[submodule\s', 'high'),
+    # Common, usually benign signals: reported, not blocking.
+    ('env-access', r'os\.environ|process\.env|\.env\b|clipboard|chat history', 'low'),
+    ('package-install', r'\b(?:pip install|npm install|yarn add)\b', 'info'),
+    ('url-reference', r'https?://|wss?://', 'info'),
 ]
+
+
+def blocking(findings):
+    """A scan is held when any finding is high or critical severity."""
+    return any(f.get('severity') in BLOCKING for f in findings)
+
+
+def load_allowlist(root=ROOT):
+    """Optional user allowlist. Suppressions downgrade a finding to info and mark
+    it `suppressed`; findings are never silently dropped.
+
+    allowlist.json: {"domains": ["docs.python.org"], "suppress_rules": ["env-access"]}
+    """
+    try:
+        raw = json.loads((root / 'allowlist.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {'domains': [], 'suppress_rules': []}
+    return {'domains': [str(d).lower() for d in raw.get('domains', [])],
+            'suppress_rules': [str(r) for r in raw.get('suppress_rules', [])]}
+
+
+def apply_allowlist(finding, line, allowlist):
+    """Downgrade a finding the user has allowlisted. Returns the finding (marked
+    suppressed) so it still appears in the report."""
+    rule = finding['rule']
+    if rule in allowlist['suppress_rules']:
+        finding['severity'] = 'info'
+        finding['suppressed'] = 'rule in allowlist suppress_rules'
+        return finding
+    if rule in ('url-reference', 'network-call') and line:
+        low = line.lower()
+        if any(domain in low for domain in allowlist['domains']):
+            finding['severity'] = 'info'
+            finding['suppressed'] = 'domain in allowlist'
+    return finding
 
 
 def inspect(data, name):
@@ -96,27 +144,30 @@ def inspect(data, name):
     if kind == 'media':
         if text_extension:
             # Media/binary bytes under a text or code extension is a disguise.
-            return [{'rule': 'content-mismatch', 'file': name,
+            return [{'rule': 'content-mismatch', 'file': name, 'severity': 'high',
                      'reason': 'Media or binary content under a text/code extension'}]
         return []
     if kind == 'executable':
-        return [{'rule': 'binary-executable', 'file': name,
+        return [{'rule': 'binary-executable', 'file': name, 'severity': 'high',
                  'reason': 'Executable or compiled binary; held for review'}]
     if kind == 'unknown-binary':
-        return [{'rule': 'unsupported', 'file': name,
+        return [{'rule': 'unsupported', 'file': name, 'severity': 'high',
                  'reason': 'Unsupported or binary format; held for review'}]
     if len(data) > TEXT_LIMIT:
-        return [{'rule': 'incomplete', 'file': name, 'reason': 'Text exceeds 2 MiB'}]
+        return [{'rule': 'incomplete', 'file': name, 'severity': 'high', 'reason': 'Text exceeds 2 MiB'}]
+    allowlist = load_allowlist()
     findings = []
     for line_no, line in enumerate(text.splitlines(), 1):
         if any(unicodedata.category(c) == 'Cf' or (ord(c) < 32 and c != '\t') for c in line):
-            findings.append({'rule': 'invisible-control', 'file': name, 'line': line_no})
+            findings.append({'rule': 'invisible-control', 'file': name, 'line': line_no, 'severity': 'high'})
         normalized = unicodedata.normalize('NFKC', line)
-        for rule, pattern in RULES:
+        for rule, pattern, severity in RULES:
             if re.search(pattern, normalized, re.I):
-                findings.append({'rule': rule, 'file': name, 'line': line_no})
+                findings.append(apply_allowlist(
+                    {'rule': rule, 'file': name, 'line': line_no, 'severity': severity},
+                    line, allowlist))
         if len(findings) >= 1000:
-            findings.append({'rule': 'incomplete', 'file': name, 'reason': 'Finding limit reached'})
+            findings.append({'rule': 'incomplete', 'file': name, 'severity': 'high', 'reason': 'Finding limit reached'})
             break
     return findings
 
@@ -294,7 +345,11 @@ def run(source=None, url=None, name=None, storage=ROOT / 'intake'):
                 report['status'] = 'review-required'
         else:
             report['findings'] = inspect_payload(data, name)
-        if report['antivirus']['status'] == 'completed-no-detection' and not report['findings']:
+        report['blocking'] = blocking(report['findings'])
+        report['max_severity'] = max((f.get('severity', 'info') for f in report['findings']),
+                                     key=lambda s: SEVERITY_ORDER.get(s, 0), default=None)
+        if (report['antivirus']['status'] == 'completed-no-detection'
+                and not report['blocking'] and report['status'] != 'review-required'):
             if not staged.exists() or hashlib.sha256(staged.read_bytes()).hexdigest() != report['sha256']:
                 raise ValueError('Staged content changed during scan')
             # Release as inert bytes; no installation, execution or automatic agent loading.

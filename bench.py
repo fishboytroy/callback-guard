@@ -42,7 +42,7 @@ def findings_for(path):
     try:
         return guard.inspect_payload(data, path.name)
     except Exception as exc:  # oversized/unsafe archive etc. -> scanner holds
-        return [{'rule': 'held-exception', 'file': path.name, 'reason': str(exc)}]
+        return [{'rule': 'held-exception', 'file': path.name, 'severity': 'high', 'reason': str(exc)}]
 
 
 def load_manifest():
@@ -84,7 +84,7 @@ def main():
             unsourced.append(rel)
             continue
         findings = findings_for(path)
-        held = len(findings) > 0
+        held = guard.blocking(findings)  # only high/critical findings hold a scan
         rules = sorted({f['rule'] for f in findings})
         rows.append({'path': rel, 'label': label, 'held': held, 'rules': rules})
         if label == 'malicious':
