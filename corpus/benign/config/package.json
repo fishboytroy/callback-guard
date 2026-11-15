@@ -1,0 +1,12 @@
+{
+  "name": "widget-kit",
+  "version": "1.2.0",
+  "scripts": {
+    "test": "jest",
+    "build": "tsc -p tsconfig.json",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

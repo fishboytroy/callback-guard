@@ -28,3 +28,15 @@ jobs:
 
       - name: Run unit tests (mocked Defender)
         run: python -m unittest -v test_guard.py test_automatic.py test_apk_inspection.py
+
+      - name: Detection benchmark baseline (non-blocking)
+        shell: bash
+        run: |
+          python bench.py --json > bench-result.json || true
+          python -c "import json; d=json.load(open('bench-result.json')); print('detection', d['detection_rate_pct'], '% | false positives', d['false_positive_rate_pct'], '%')"
+
+      - name: Upload benchmark result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: detection-benchmark
+          path: bench-result.json

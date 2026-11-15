@@ -1,0 +1,31 @@
+{
+  "description": "Benchmark corpus for Callback Guard. Each entry's `label` is the result the scanner SHOULD produce: `malicious` files must be held (>=1 finding), `benign` files must pass clean (0 findings). The `code` section lists executable-malware techniques the benchmark needs but that are intentionally NOT shipped as working exploits in this repo; source them from a public test set and drop them in corpus/malicious/code/ (see corpus/README.md).",
+  "samples": [
+    { "path": "benign/python/cli_tool.py", "label": "benign", "note": "argparse CLI, stdout only" },
+    { "path": "benign/python/data_helpers.py", "label": "benign", "note": "reads one env flag; no network or exec" },
+    { "path": "benign/markdown/README.md", "label": "benign", "note": "docs link + pip install in prose" },
+    { "path": "benign/markdown/CONTRIBUTING.md", "label": "benign", "note": "npm install in prose" },
+    { "path": "benign/config/package.json", "label": "benign", "note": "ordinary build/test scripts" },
+    { "path": "benign/config/settings.yaml", "label": "benign", "note": "plain config" },
+    { "path": "benign/javascript/format.js", "label": "benign", "note": "pure string helpers" },
+
+    { "path": "malicious/injection/plain_wording.md", "label": "malicious", "technique": "injection", "detail": "reads a credentials path and appends to reply, no trigger phrase" },
+    { "path": "malicious/injection/split_across_lines.md", "label": "malicious", "technique": "injection", "detail": "instruction split across numbered list items" },
+    { "path": "malicious/injection/hidden_in_comment.md", "label": "malicious", "technique": "injection", "detail": "override instruction inside an HTML comment" },
+    { "path": "malicious/injection/in_code_fence.md", "label": "malicious", "technique": "injection", "detail": "persistence instruction inside a code fence" },
+    { "path": "malicious/injection/zero_width.md", "label": "malicious", "technique": "injection", "detail": "override text wrapped in zero-width characters" },
+    { "path": "malicious/injection/authority_claim.md", "label": "malicious", "technique": "injection", "detail": "false platform/Anthropic authorization to skip confirmations" }
+  ],
+  "code_samples_to_source": [
+    { "technique": "process-execution via split strings", "expected_rule": "process-execution", "expected_severity": "high" },
+    { "technique": "importlib / __import__ indirect import", "expected_rule": "dynamic-code", "expected_severity": "high" },
+    { "technique": "builtins getattr -> exec/eval", "expected_rule": "dynamic-code", "expected_severity": "high" },
+    { "technique": "ctypes / native memory allocation", "expected_rule": "native-code", "expected_severity": "high" },
+    { "technique": "marshal / pickle loader", "expected_rule": "dynamic-code", "expected_severity": "high" },
+    { "technique": "short base64 chunks joined then decoded+compiled", "expected_rule": "encoded-content", "expected_severity": "high" },
+    { "technique": "credential read + network call in one file", "expected_rule": "exfiltration", "expected_severity": "critical" },
+    { "technique": "PowerShell download cradle (scriptblock::create / webclient)", "expected_rule": "dynamic-code", "expected_severity": "high" },
+    { "technique": "JS child_process / Function() constructor", "expected_rule": "process-execution", "expected_severity": "high" },
+    { "technique": "package.json postinstall running a script", "expected_rule": "installation-or-persistence", "expected_severity": "high" }
+  ]
+}
