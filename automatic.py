@@ -135,11 +135,15 @@ def download_rows(history):
             return db.execute(query).fetchall()
 
 
-def snapshot(folders):
+def snapshot(folders, browser_metadata=False):
     current, errors = inventory(folders)
-    targets, browser_errors = browser_targets()
-    current.update(targets)
-    return current, errors + browser_errors
+    if browser_metadata:
+        # Reading and snapshotting browser History databases resembles info-stealer
+        # behavior to EDR tools, so it is opt-in. Folder watching is the default.
+        targets, browser_errors = browser_targets()
+        current.update(targets)
+        errors += browser_errors
+    return current, errors
 
 
 def notify():
@@ -169,8 +173,9 @@ def monitor():
         except OSError:
             return
         state_path = RUNTIME / 'watch-state.json'
+        browser_metadata = bool(load(RUNTIME / 'config.json', {}).get('browser_metadata', False))
         folders = download_folders()
-        previous, errors = snapshot(folders)
+        previous, errors = snapshot(folders, browser_metadata)
         state = load(state_path, None)
         if state is None:
             # Do not flood the user with alerts for all historical Downloads.
@@ -182,8 +187,10 @@ def monitor():
         while not stop.exists():
             time.sleep(3)
             if time.monotonic() - last_discovery >= 60:
-                folders = download_folders(); last_discovery = time.monotonic()
-            current, errors = snapshot(folders)
+                folders = download_folders()
+                browser_metadata = bool(load(RUNTIME / 'config.json', {}).get('browser_metadata', False))
+                last_discovery = time.monotonic()
+            current, errors = snapshot(folders, browser_metadata)
             needs_review = False
             for filename in eligible(current, previous, state['checked']):
                 if stop.exists():
@@ -203,7 +210,7 @@ def monitor():
             state['checked'] = {p: stamp for p, stamp in state['checked'].items() if p in current}
             save(state_path, state)
             save(RUNTIME / 'monitor-status.json', {'pid': os.getpid(), 'heartbeat': time.time(),
-                 'folders': list(map(str, folders)), 'errors': errors,
+                 'folders': list(map(str, folders)), 'errors': errors, 'browser_metadata': browser_metadata,
                  'mode': 'After-download observation. Originals are not blocked or quarantined.'})
             if needs_review:
                 notify()

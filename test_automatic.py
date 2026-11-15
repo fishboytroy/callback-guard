@@ -86,5 +86,23 @@ class AutomaticTests(unittest.TestCase):
                 db.close()
 
 
+    def test_snapshot_skips_browser_metadata_by_default(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root / 'a.md').write_text('x')
+            with patch.object(automatic, 'browser_targets',
+                              side_effect=AssertionError('browser metadata read without opt-in')):
+                current, errors = automatic.snapshot([root])
+            self.assertIn(str(root / 'a.md'), current)
+
+    def test_snapshot_reads_browser_metadata_when_enabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch.object(automatic, 'browser_targets',
+                              return_value=({'C:/dl.md': [1, 2, 3]}, [])) as reader:
+                current, _ = automatic.snapshot([root], browser_metadata=True)
+            reader.assert_called_once()
+            self.assertIn('C:/dl.md', current)
+
+
 if __name__ == '__main__':
     unittest.main()
