@@ -33,6 +33,11 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- Severity on every finding. Only `high` and `critical` hold a scan; `info` and
+  `low` (a bare URL, a `pip install` mention, reading one env var) are reported
+  but do not block. An optional `allowlist.json` (`{"domains": [...],
+  "suppress_rules": [...]}`) downgrades chosen domains or rules; suppressed
+  findings are marked, never silently dropped.
 - File type by content (magic bytes), not extension: inert images and fonts
   carry no finding, executables and unreadable binaries are held, and text in
   any language is read and rule-checked. Content that hides under a mismatched
