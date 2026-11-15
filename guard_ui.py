@@ -1,4 +1,5 @@
 """Standalone Callback Guard desktop interface (standard-library Tkinter)."""
+# SPDX-License-Identifier: BUSL-1.1
 import json
 import os
 from pathlib import Path
