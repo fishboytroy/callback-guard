@@ -33,6 +33,13 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- Prompt-injection detection. Instruction text aimed at the assistant is scored
+  over a multi-line window across five signal categories (address to the model,
+  concealment, sensitive target, exfiltration, authority/override), so reworded
+  or line-split injection is caught while an ordinary skill or README is not.
+  Zero-width characters are stripped before matching. When injection is flagged,
+  the report carries a review packet; an agent may add findings from it but can
+  never clear a held result.
 - Structure-aware analysis, not just keywords. Python is parsed with `ast`:
   import aliases and split or assembled strings are resolved, so indirection
   like `importlib.import_module('sub'+'process')`, `getattr(o,'ex'+'ec')`,
