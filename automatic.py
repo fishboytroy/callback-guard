@@ -1,4 +1,5 @@
 """Automatic after-download scanning; not an execution-blocking security boundary."""
+# SPDX-License-Identifier: BUSL-1.1
 import argparse
 import hashlib
 import json

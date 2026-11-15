@@ -1,4 +1,5 @@
 """Bounded, non-executing APK triage. Not a malware or signature verifier."""
+# SPDX-License-Identifier: BUSL-1.1
 import hashlib
 import io
 from pathlib import PurePosixPath
