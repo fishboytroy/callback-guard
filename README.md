@@ -33,6 +33,13 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- Structure-aware analysis, not just keywords. Python is parsed with `ast`:
+  import aliases and split or assembled strings are resolved, so indirection
+  like `importlib.import_module('sub'+'process')`, `getattr(o,'ex'+'ec')`,
+  `ctypes`, and a credential read combined with a network call are caught. A
+  normalized pass re-joins split string literals in PowerShell, JavaScript and
+  shell before matching (download cradles, `child_process`, dynamic `require`),
+  and `package.json` lifecycle scripts (`postinstall` and friends) are flagged.
 - Severity on every finding. Only `high` and `critical` hold a scan; `info` and
   `low` (a bare URL, a `pip install` mention, reading one env var) are reported
   but do not block. An optional `allowlist.json` (`{"domains": [...],

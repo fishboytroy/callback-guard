@@ -79,6 +79,26 @@ not reflect behavior on ordinary projects, where the 0% rate above applies.
 An `allowlist.json` at the repo root can downgrade specific domains or rules;
 suppressed findings are marked `suppressed`, never dropped.
 
+### After Phase 3 (structure-aware analyzers)
+
+```
+Malicious detected : 4/8  (50% detection)
+Benign clean       : 9/9  (0% false positives)
+```
+
+Python is parsed with `ast`: import aliases and split/assembled strings are
+resolved, so `importlib.import_module('sub'+'process')`, `getattr(o,'ex'+'ec')`,
+`ctypes`, and a credential read combined with a network call (escalated to
+`exfiltration` critical) are all caught. PowerShell, JS and shell get a
+normalized pass that re-joins split string literals before matching (download
+cradles, `child_process`, dynamic `require`); `package.json` lifecycle scripts
+are flagged. Benign Python/JS/`package.json` stay clean.
+
+The remaining four misses are prompt-injection wording, which needs the
+semantic detection in Phase 4. More executable-malware techniques (PowerShell
+cradle, exfil, loaders) are covered by unit tests; only one inert Python fixture
+is shipped in `malicious/code/`.
+
 ## On the `code/` samples
 
 The malicious **code** samples (reverse-exec, credential exfiltration, native
