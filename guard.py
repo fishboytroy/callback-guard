@@ -26,6 +26,49 @@ TEXT_LIMIT = 2 * 1024 * 1024
 TEXT = {'.md', '.markdown', '.txt', '.json', '.yaml', '.yml', '.toml', '.ini',
         '.cfg', '.py', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.ps1',
         '.sh', '.bat', '.cmd', '.html', '.htm', '.css', '.xml', '.csv', '.rst'}
+# Content is classified by magic bytes, not by extension. Media and fonts are
+# inert (no embedded instructions the scanner must read); executables and other
+# unreadable binaries are held. Text of any language is decoded and rule-checked.
+MEDIA_MAGIC = (
+    b'\x89PNG\r\n\x1a\n',          # PNG
+    b'\xff\xd8\xff',               # JPEG
+    b'GIF87a', b'GIF89a',          # GIF
+    b'\x00\x00\x01\x00',           # ICO
+    b'\x00\x00\x02\x00',           # CUR
+    b'BM',                         # BMP
+    b'wOFF', b'wOF2',              # WOFF / WOFF2 fonts
+    b'OTTO', b'ttcf',              # OpenType / TrueType collection
+    b'\x00\x01\x00\x00',           # TrueType font
+)
+EXECUTABLE_MAGIC = (
+    b'MZ',                         # DOS/PE (Windows .exe/.dll)
+    b'\x7fELF',                    # ELF
+    b'\xfe\xed\xfa\xce', b'\xfe\xed\xfa\xcf',  # Mach-O
+    b'\xce\xfa\xed\xfe', b'\xcf\xfa\xed\xfe',  # Mach-O (reversed)
+    b'\xca\xfe\xba\xbe',           # Java class / Mach-O fat
+    b'dex\n',                      # Android DEX
+)
+
+
+def classify(data):
+    """Return (kind, text). kind is 'media', 'executable', 'unknown-binary' or
+    'text'; text is the decoded string only when kind == 'text'."""
+    if data.startswith(MEDIA_MAGIC):
+        return 'media', None
+    if data[:4] == b'RIFF' and data[8:12] in {b'WEBP', b'WAVE', b'AVI '}:
+        return 'media', None
+    if data.startswith(EXECUTABLE_MAGIC):
+        return 'executable', None
+    try:
+        encoding = 'utf-16' if data[:2] in (b'\xff\xfe', b'\xfe\xff') else 'utf-8-sig'
+        text = data.decode(encoding, errors='strict')
+    except (UnicodeError, ValueError):
+        return 'unknown-binary', None
+    if '\x00' in text:
+        return 'unknown-binary', None
+    return 'text', text
+
+
 RULES = [
     ('instruction-override', r'ignore\s+(?:all\s+)?(?:previous|prior|system)\s+instructions|bypass.{0,40}(?:approval|permission|consent)'),
     ('concealment', r'secretly|silently|do not (?:tell|inform|disclose)|without (?:the )?user'),
@@ -41,19 +84,29 @@ RULES = [
 
 
 def inspect(data, name):
-    """Strict heuristic policy: every finding requires review, never auto-override."""
+    """Strict heuristic policy: every finding requires review, never auto-override.
+
+    Classify by content first. Inert media carries no finding unless it hides
+    under a text/code extension; executables and unreadable binaries are held;
+    text of any language (not only the known extensions) is rule-checked."""
+    suffix = Path(name).suffix.lower()
+    base = Path(name).name.lower()
+    text_extension = suffix in TEXT or base in {'license', 'readme', 'dockerfile', '.gitignore'}
+    kind, text = classify(data)
+    if kind == 'media':
+        if text_extension:
+            # Media/binary bytes under a text or code extension is a disguise.
+            return [{'rule': 'content-mismatch', 'file': name,
+                     'reason': 'Media or binary content under a text/code extension'}]
+        return []
+    if kind == 'executable':
+        return [{'rule': 'binary-executable', 'file': name,
+                 'reason': 'Executable or compiled binary; held for review'}]
+    if kind == 'unknown-binary':
+        return [{'rule': 'unsupported', 'file': name,
+                 'reason': 'Unsupported or binary format; held for review'}]
     if len(data) > TEXT_LIMIT:
         return [{'rule': 'incomplete', 'file': name, 'reason': 'Text exceeds 2 MiB'}]
-    suffix = Path(name).suffix.lower()
-    if suffix not in TEXT and Path(name).name.lower() not in {'license', 'readme', 'dockerfile', '.gitignore'}:
-        return [{'rule': 'unsupported', 'file': name, 'reason': 'Unsupported format; held for review'}]
-    try:
-        encoding = 'utf-16' if data.startswith((b'\xff\xfe', b'\xfe\xff')) else 'utf-8-sig'
-        text = data.decode(encoding, errors='strict')
-        if '\x00' in text:
-            raise ValueError('NUL character')
-    except (UnicodeError, ValueError):
-        return [{'rule': 'unsupported', 'file': name, 'reason': 'Not supported plain text'}]
     findings = []
     for line_no, line in enumerate(text.splitlines(), 1):
         if any(unicodedata.category(c) == 'Cf' or (ord(c) < 32 and c != '\t') for c in line):

@@ -33,6 +33,10 @@ The skill loads its tools from its own directory and does not depend on the orig
 
 ## What it checks
 
+- File type by content (magic bytes), not extension: inert images and fonts
+  carry no finding, executables and unreadable binaries are held, and text in
+  any language is read and rule-checked. Content that hides under a mismatched
+  extension (for example a `.png` that is really an executable) is held.
 - Hidden characters and selected instruction override or concealment patterns.
 - Potential outbound requests, callbacks, telemetry, credential access, dynamic execution, and persistence commands.
 - ZIP and TAR members, unsafe paths, links, unsupported formats, nested archives, encryption, and bounded sizes.

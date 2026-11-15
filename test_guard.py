@@ -19,7 +19,9 @@ class GateTests(unittest.TestCase):
         self.assertEqual({h['rule'] for h in hits}, {'instruction-override', 'invisible-control'})
 
     def test_binary_and_nested_archive_held(self):
-        self.assertTrue(guard.inspect_payload(self.archive('inner.zip', b'PK'), 'outer.zip'))
+        # A real nested archive is binary content -> held (not auto-skipped).
+        inner = self.archive('payload.py', b'print(1)')
+        self.assertTrue(guard.inspect_payload(self.archive('inner.zip', inner), 'outer.zip'))
         self.assertTrue(guard.inspect(b'MZ\x00', 'harmless.md'))
 
     def test_zip_traversal(self):
@@ -164,6 +166,42 @@ class GateTests(unittest.TestCase):
                 report, _ = guard.run(url='https://example.org/SKILL.md', storage=Path(tmp))
             self.assertEqual(report['status'], 'held')
             self.assertIn('HTML page', report['error'])
+
+
+class ClassificationTests(unittest.TestCase):
+    PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 16
+
+    def test_inert_media_no_findings(self):
+        # Images and icons carry no instructions the scanner must read.
+        self.assertEqual(guard.inspect(self.PNG, 'logo.png'), [])
+        self.assertEqual(guard.inspect(b'\x00\x00\x01\x00rest', 'app.ico'), [])
+
+    def test_classify_kinds(self):
+        self.assertEqual(guard.classify(self.PNG)[0], 'media')
+        self.assertEqual(guard.classify(b'MZ' + b'\x90' * 40)[0], 'executable')
+        self.assertEqual(guard.classify(b'\x7fELF\x02\x01')[0], 'executable')
+        self.assertEqual(guard.classify(b'\xde\xad\xbe\xef\x00\xff')[0], 'unknown-binary')
+        kind, text = guard.classify(b'package main\n')
+        self.assertEqual((kind, text), ('text', 'package main\n'))
+
+    def test_executable_held_regardless_of_extension(self):
+        hits = guard.inspect(b'MZ' + b'\x90' * 64, 'installer_as_png.png')
+        self.assertEqual(hits[0]['rule'], 'binary-executable')
+
+    def test_media_under_code_extension_is_mismatch(self):
+        hits = guard.inspect(self.PNG, 'evil.py')
+        self.assertEqual(hits[0]['rule'], 'content-mismatch')
+
+    def test_other_language_text_is_scanned_not_unsupported(self):
+        # A .go file used to be 'unsupported'; now it is read and rule-checked.
+        clean = guard.inspect(b'package main\nfunc main() {}\n', 'server.go')
+        self.assertEqual(clean, [])
+        flagged = guard.inspect(b'// see https://example.com\n', 'server.go')
+        self.assertEqual(flagged[0]['rule'], 'outbound-or-callback')
+
+    def test_unknown_binary_held(self):
+        hits = guard.inspect(b'\x00\x01\x02\x03\xfebinary', 'blob.dat')
+        self.assertEqual(hits[0]['rule'], 'unsupported')
 
 
 if __name__ == '__main__':
