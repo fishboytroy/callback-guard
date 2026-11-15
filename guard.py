@@ -1,4 +1,5 @@
 """Callback Inspector intake gate. Does not install a system-wide interception hook."""
+# SPDX-License-Identifier: BUSL-1.1
 import argparse
 import ast
 import hashlib

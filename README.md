@@ -126,4 +126,16 @@ python -m unittest -v test_guard.py test_automatic.py test_apk_inspection.py
 
 These unit tests mock Microsoft Defender responses. Passing CI confirms only that the listed regression tests passed on the Windows runner. It does not establish a live Defender scan, malware-detection accuracy, comprehensive callback detection, or end-to-end coverage of the desktop interface, background monitor, and APK signing. Run a separate scan on the exact artifact you intend to use.
 
-No open-source license has been selected. Repository availability alone does not grant a license to redistribute or modify this work.
+## License
+
+Callback Guard is source-available under the [Business Source License 1.1](LICENSE).
+You may read, modify, redistribute, and make non-production use of it freely, and
+make production use inside your own organization; you may not offer it to third
+parties as a competing hosted or commercial scanning service without a commercial
+license. Each released version converts to Apache-2.0 on the Change Date in the
+[LICENSE](LICENSE). The BSL is not an OSI open-source license.
+
+Planned Community / Pro / Business editions and how contributions are licensed are
+described in [LICENSING.md](LICENSING.md); contribution terms (DCO sign-off) are in
+[CONTRIBUTING.md](CONTRIBUTING.md). This is a summary, not legal advice — the
+[LICENSE](LICENSE) file governs.
