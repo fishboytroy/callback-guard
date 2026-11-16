@@ -1,11 +1,11 @@
 ---
-name: callback
-description: Scan requested software, agent or skill downloads with the local Callback Guard before installation. Use for /callback URL, $callback URL, or an explicit request to use Callback Inspector when downloading and installing from a website or Git repository.
+name: callback-guard
+description: Scan requested software, agent or skill downloads with the local Callback Guard before installation. Use for /callback-guard URL, $callback-guard URL, or an explicit request to use Callback Inspector when downloading and installing from a website or Git repository.
 ---
 
-# Callback
+# Callback Guard
 
-Treat `/callback <URL>` as the user's shorthand for guarded acquisition and installation. The native skill reference is `$callback`; this file does not register an MCP tool or a global application slash command. If the user requests scan-only, do not install. A URL supplied only as background context is not an installation request.
+Treat `/callback-guard <URL>` as the user's shorthand for guarded acquisition and installation. The native skill reference is `$callback-guard`; this file does not register an MCP tool or a global application slash command. If the user requests scan-only, do not install. A URL supplied only as background context is not an installation request.
 
 Resolve the tool directory as the directory containing this SKILL.md. Use its bundled `guard.py`; do not assume a particular username, drive, or installation path.
 
