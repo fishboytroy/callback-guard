@@ -1,6 +1,8 @@
 import io
 from pathlib import Path
+import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -453,6 +455,64 @@ class DependencyTests(unittest.TestCase):
                 report, _ = guard.run(source=src, storage=root / 'intake')
             self.assertEqual(report['status'], 'checks-passed')
             self.assertNotIn('osv_checked', report)
+
+
+class ProExtensionTests(unittest.TestCase):
+    """The optional paid-tier hook may only ADD findings, never clear a result."""
+
+    def tearDown(self):
+        sys.modules.pop('callback_guard_pro', None)
+
+    def _install_fake_pro(self, enrich):
+        module = types.ModuleType('callback_guard_pro')
+        module.__version__ = '9.9'
+        module.enrich = enrich
+        sys.modules['callback_guard_pro'] = module
+
+    def test_absent_module_leaves_report_untouched(self):
+        report = {'findings': [{'rule': 'base', 'severity': 'info'}]}
+        guard.apply_pro_extensions(report, b'data', 'f.txt')
+        self.assertEqual(len(report['findings']), 1)
+        self.assertNotIn('pro', report)
+
+    def test_extension_can_add_findings(self):
+        self._install_fake_pro(lambda report, data, name:
+                               [{'rule': 'pro-policy', 'severity': 'low', 'file': name}])
+        report = {'findings': [{'rule': 'base', 'severity': 'info'}]}
+        guard.apply_pro_extensions(report, b'data', 'f.txt')
+        self.assertEqual(report['findings'][0]['rule'], 'base')
+        self.assertTrue(any(f['rule'] == 'pro-policy' for f in report['findings']))
+        self.assertEqual(report['pro']['status'], 'applied')
+        self.assertEqual(report['pro']['added'], 1)
+
+    def test_extension_cannot_clear_engine_findings(self):
+        def hostile(report, data, name):
+            report['findings'].clear()  # operates on the deep copy only
+            return [{'rule': 'pro', 'severity': 'info'}]
+        self._install_fake_pro(hostile)
+        report = {'findings': [{'rule': 'base', 'severity': 'critical'}]}
+        guard.apply_pro_extensions(report, b'data', 'f.txt')
+        self.assertTrue(any(f['rule'] == 'base' for f in report['findings']))
+
+    def test_broken_extension_does_not_break_scan(self):
+        def boom(report, data, name):
+            raise RuntimeError('pro exploded')
+        self._install_fake_pro(boom)
+        report = {'findings': [{'rule': 'base', 'severity': 'info'}]}
+        guard.apply_pro_extensions(report, b'data', 'f.txt')
+        self.assertEqual(report['pro']['status'], 'error')
+        self.assertEqual(len(report['findings']), 1)
+
+    def test_pro_finding_holds_an_otherwise_clean_scan(self):
+        self._install_fake_pro(lambda report, data, name:
+                               [{'rule': 'pro-policy-violation', 'severity': 'critical', 'file': name}])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); src = root / 'clean.txt'; src.write_text('nothing suspicious here\n')
+            with patch.object(guard, 'antivirus', return_value={'status': 'completed-no-detection'}):
+                report, _ = guard.run(source=src, storage=root / 'intake')
+            self.assertEqual(report['pro']['status'], 'applied')
+            self.assertTrue(report['blocking'])
+            self.assertNotEqual(report['status'], 'checks-passed')
 
 
 if __name__ == '__main__':

@@ -16,3 +16,9 @@ tmp*/
 *.tar
 *.gz
 *.lnk
+
+# Paid-tier (Pro/Business) code is never committed to this public source-available
+# repository. The free engine loads it only if separately installed. See ARCHITECTURE.md.
+callback_guard_pro.py
+callback_guard_pro/
+pro/

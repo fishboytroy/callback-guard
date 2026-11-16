@@ -1,7 +1,9 @@
 """Callback Inspector intake gate. Does not install a system-wide interception hook."""
 # SPDX-License-Identifier: BUSL-1.1
+# Copyright (c) 2026 fishboytroy. Licensed under the Business Source License 1.1; see LICENSE.
 import argparse
 import ast
+import copy
 import hashlib
 try:
     import tomllib
@@ -600,6 +602,33 @@ def enrich_with_osv(findings):
     return findings
 
 
+def apply_pro_extensions(report, data, name):
+    """Optional paid-tier enrichment hook.
+
+    The free engine never ships Pro code. A separately licensed, privately
+    distributed `callback_guard_pro` module may be installed alongside it; if
+    present, its `enrich(report_snapshot, data, name)` is called and may RETURN
+    extra finding dicts to append. The extension receives a deep copy of the
+    report, so it cannot mutate or remove the engine's own findings, and the
+    caller recomputes the blocking and release decision from the combined
+    findings afterwards. An extension that is absent, raises, or returns
+    anything unexpected never affects the free scan's result. See ARCHITECTURE.md.
+    """
+    try:
+        import callback_guard_pro  # Optional; resolved at runtime, not shipped here.
+    except Exception:
+        return  # Free tier: no Pro module installed.
+    try:
+        added = callback_guard_pro.enrich(copy.deepcopy(report), data, name)
+        extra = [f for f in (added or []) if isinstance(f, dict)]
+        report['findings'].extend(extra)
+        report['pro'] = {'status': 'applied', 'added': len(extra),
+                         'version': getattr(callback_guard_pro, '__version__', 'unknown')}
+    except Exception as exc:
+        # A broken extension must not break or clear the free scan.
+        report['pro'] = {'status': 'error', 'error': str(exc)}
+
+
 def analyze_structural(text, name, allowlist):
     """Dispatch structure-aware analysis by file type. Returns severity-tagged
     findings, with allowlisted rules downgraded."""
@@ -843,6 +872,10 @@ def run(source=None, url=None, name=None, storage=ROOT / 'intake', osv=False):
             # Opt-in network lookup; may add known-vulnerability findings.
             enrich_with_osv(report['findings'])
             report['osv_checked'] = True
+        # Optional paid-tier enrichment. May only ADD findings; the blocking and
+        # release decision below is recomputed from the combined findings, so a
+        # Pro finding can hold a result but never clear one. Absent in the free tier.
+        apply_pro_extensions(report, data, name)
         report['blocking'] = blocking(report['findings'])
         report['max_severity'] = max((f.get('severity', 'info') for f in report['findings']),
                                      key=lambda s: SEVERITY_ORDER.get(s, 0), default=None)

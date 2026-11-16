@@ -137,5 +137,7 @@ license. Each released version converts to Apache-2.0 on the Change Date in the
 
 Planned Community / Pro / Business editions and how contributions are licensed are
 described in [LICENSING.md](LICENSING.md); contribution terms (DCO sign-off) are in
-[CONTRIBUTING.md](CONTRIBUTING.md). This is a summary, not legal advice — the
+[CONTRIBUTING.md](CONTRIBUTING.md). This repository is the complete free engine;
+how the paid layer attaches without ever being committed here is described in
+[ARCHITECTURE.md](ARCHITECTURE.md). This is a summary, not legal advice — the
 [LICENSE](LICENSE) file governs.

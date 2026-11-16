@@ -1,5 +1,6 @@
 """Automatic after-download scanning; not an execution-blocking security boundary."""
 # SPDX-License-Identifier: BUSL-1.1
+# Copyright (c) 2026 fishboytroy. Licensed under the Business Source License 1.1; see LICENSE.
 import argparse
 import hashlib
 import json
