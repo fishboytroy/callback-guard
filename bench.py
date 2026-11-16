@@ -17,6 +17,8 @@ Use --strict in CI once the engine is improved, to fail the build on any
 regression. Without it, the script still prints the scorecard and exits 1 on
 imperfect results but is meant for local inspection.
 """
+# SPDX-License-Identifier: BUSL-1.1
+# Copyright (c) 2026 fishboytroy. Licensed under the Business Source License 1.1; see LICENSE.
 import argparse
 import json
 import sys
