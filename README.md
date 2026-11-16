@@ -1,6 +1,6 @@
 # Callback Guard
 
-A Windows-first `/callback` skill and standalone inspection tool for checking agents, skills, Markdown instructions, software downloads, source archives, and Android APKs before use.
+A Windows-first `/callback-guard` skill and standalone inspection tool for checking agents, skills, Markdown instructions, software downloads, source archives, and Android APKs before use.
 
 It combines conservative static checks with Microsoft Defender. Findings are review leads, not proof of malicious behavior. A passing result means only that the implemented checks passed on the recorded bytes; it is not a security certification.
 
@@ -25,9 +25,9 @@ The GUI supports local files, APKs, and HTTPS downloads. It shows a summary, ful
 
 ## Use as a skill
 
-Place this complete repository folder, including `SKILL.md` and the Python files, in your agent's user skill directory under the folder name `callback`. For Codex on Windows, a typical destination is `$HOME\.codex\skills\callback`. Check for an existing installation first; do not overwrite it without preserving your configuration.
+Place this complete repository folder, including `SKILL.md` and the Python files, in your agent's user skill directory under the folder name `callback-guard`. For Codex on Windows, a typical destination is `$HOME\.codex\skills\callback-guard`. Check for an existing installation first; do not overwrite it without preserving your configuration.
 
-Invoke `$callback <URL>` in a compatible agent. `/callback <URL>` is conversational shorthand where the agent supports it; this repository does not register a universal slash command or an MCP server. Use `/callback <URL> scan only` when you want a report without installation. The skill directs an agent to stop on held or incomplete scans and verify the exact checked bytes before any authorized installation.
+Invoke `$callback-guard <URL>` in a compatible agent. `/callback-guard <URL>` is conversational shorthand where the agent supports it; this repository does not register a universal slash command or an MCP server. Use `/callback-guard <URL> scan only` when you want a report without installation. The skill directs an agent to stop on held or incomplete scans and verify the exact checked bytes before any authorized installation.
 
 The skill loads its tools from its own directory and does not depend on the original author's filesystem paths. Reading the skill in an AI service can still expose material you give that service under its own policies.
 
